@@ -1,14 +1,30 @@
-# Welcome to your CDK TypeScript project!
+# Amazon SNS architecture reference with CDK
 
-This is a blank project for TypeScript development with CDK.
+This project contains source code and supporting files for a serverless application that you can deploy with CDK.
 
-The `cdk.json` file tells the CDK Toolkit how to execute your app.
+![Amazon SNS architecture reference with CDK](images/diagram.png)
 
-## Useful commands
+## Requirements for development environment
 
- * `npm run build`   compile typescript to js
- * `npm run watch`   watch for changes and compile
- * `npm run test`    perform the jest unit tests
- * `cdk deploy`      deploy this stack to your default AWS account/region
- * `cdk diff`        compare deployed stack with current state
- * `cdk synth`       emits the synthesized CloudFormation template
+Work inside your AWS Cloud9 environment - [Create an EC2 Environment](https://docs.aws.amazon.com/cloud9/latest/user-guide/create-environment-main.html#create-environment-console)
+
+
+Install the latest version of CDK.
+
+``` bash
+npm install -g aws-cdk --force
+```
+
+Install the Amazon ECS CLI, will be used to push the image docker to an Amazon ECR repository with the ecs-cli push command.
+
+``` bash
+sudo curl -o /usr/local/bin/ecs-cli https://amazon-ecs-cli.s3.amazonaws.com/ecs-cli-linux-amd64-latest
+sudo chmod +x /usr/local/bin/ecs-cli
+ecs-cli --version
+```
+
+## Step 1: Create CDK project with Amazon ECR Repository for backend
+
+## Step 2: Create the image container and push to Amazon ECR
+
+## Step 3: Add to the CDK project the remaining services

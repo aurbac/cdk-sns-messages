@@ -1,31 +1,57 @@
 import * as cdk from '@aws-cdk/core';
 import * as ecr from '@aws-cdk/aws-ecr';
 import * as ec2 from '@aws-cdk/aws-ec2';
-
 import * as ecs from '@aws-cdk/aws-ecs';
 import * as iam from '@aws-cdk/aws-iam';
-
 import * as ecs_patterns from '@aws-cdk/aws-ecs-patterns';
 import * as elbv2 from '@aws-cdk/aws-elasticloadbalancingv2';
-
 import * as cache from '@aws-cdk/aws-elasticache';
-
 import * as lambda from '@aws-cdk/aws-lambda';
 import * as lambda_python from '@aws-cdk/aws-lambda-python';
 import * as sqs from '@aws-cdk/aws-sqs';
 import { SqsEventSource, SqsDlq } from '@aws-cdk/aws-lambda-event-sources';
+import * as dynamodb from '@aws-cdk/aws-dynamodb';
 
 export class CdkSnsMessagesStack extends cdk.Stack {
   constructor(scope: cdk.Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
-
-    // The code that defines your stack goes here
     
-    const current_path = process.cwd();
+    //////////////////////////////////////////////////////////////////////
+    // STEP 1
+    //////////////////////////////////////////////////////////////////////
+    
+    // Amazon ECS Repository to store image container
     
     const repository = new ecr.Repository(this, "backend-app", {
       repositoryName: "backend-app"
     });
+    
+    
+    //////////////////////////////////////////////////////////////////////
+    // STEP 3
+    //////////////////////////////////////////////////////////////////////
+    
+    // DynamoDB Tables
+    
+    const topics = new dynamodb.Table(this, 'topics', {
+      partitionKey: {
+        name: 'topic_arn',
+        type: dynamodb.AttributeType.STRING
+      },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+    });
+    new cdk.CfnOutput(this, 'TopicsTableName', { value: topics.tableName });
+    
+    const endpoints = new dynamodb.Table(this, 'endpoints', {
+      partitionKey: {
+        name: 'endpoint_id',
+        type: dynamodb.AttributeType.STRING
+      },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+    });
+    new cdk.CfnOutput(this, 'EndpointsTableName', { value: endpoints.tableName });
+    
+    // Network configuration
     
     const vpc = new ec2.Vpc(this, "my-vpc", {
       cidr: "10.1.0.0/16",
@@ -37,6 +63,7 @@ export class CdkSnsMessagesStack extends cdk.Stack {
       maxAzs: 3 // Default is all AZs in region
     });
     
+    // Cluster with Amazon ElastiCache
     
     const redisSubnetGroup = new cache.CfnSubnetGroup(
       this,
@@ -50,13 +77,13 @@ export class CdkSnsMessagesStack extends cdk.Stack {
       }
     );
     
-
     // The security group that defines network level access to the cluster
+    
     const securityGroup = new ec2.SecurityGroup(this, `redis-security-group`, { vpc: vpc });
     securityGroup.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(6379), 'allow redis access from the world');
 
-
-    // The cluster resource itself.
+    // The redis cluster
+    
     const redisCluster = new cache.CfnCacheCluster(this, `redis-cluster`, {
       cacheNodeType: 'cache.m5.large',
       engine: 'redis',
@@ -68,31 +95,13 @@ export class CdkSnsMessagesStack extends cdk.Stack {
       ]
     });
     
-    /*
-    const redisReplication = new cache.CfnReplicationGroup(
-      this,
-      `RedisReplicaGroup`,
-      {
-        engine: "redis",
-        cacheNodeType: "cache.m5.xlarge",
-        replicasPerNodeGroup: 1,
-        numNodeGroups: 2,
-        automaticFailoverEnabled: true,
-        autoMinorVersionUpgrade: true,
-        replicationGroupDescription: "cluster redis",
-        cacheSubnetGroupName: redisSubnetGroup.cacheSubnetGroupName,
-        securityGroupIds: [
-          securityGroup.securityGroupId
-        ]
-      }
-    );
-    redisReplication.addDependsOn(redisSubnetGroup);
-    */
+    // Amazon ECS cluster
     
     const cluster = new ecs.Cluster(this, "cluster", {
       vpc: vpc
     });
     
+    // IAM Role policy for Amazon ECS
     
     const executionRolePolicy =  new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
@@ -107,6 +116,8 @@ export class CdkSnsMessagesStack extends cdk.Stack {
             ]
     });
 
+    // Amazon ECS container service definition
+    
     const fargateTaskDefinition = new ecs.FargateTaskDefinition(this, 'task-backend-app', {
       memoryLimitMiB: 512,
       cpu: 256,
@@ -117,12 +128,19 @@ export class CdkSnsMessagesStack extends cdk.Stack {
       resources: ['*'],
       actions: ['sns:*']
     }));
+    fargateTaskDefinition.addToTaskRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      resources: [topics.tableArn, endpoints.tableArn],
+      actions: ['dynamodb:*']
+    }));
 
     const container = fargateTaskDefinition.addContainer("container-backend-app", {
       image: ecs.ContainerImage.fromRegistry(repository.repositoryUri),
       environment: { 
-        'REDIS_ENDPOINT_ADDRESS' : redisCluster.attrRedisEndpointAddress,
-        'REDIS_ENDPOINT_PORT' : redisCluster.attrRedisEndpointPort
+        REDIS_ENDPOINT_ADDRESS : redisCluster.attrRedisEndpointAddress,
+        REDIS_ENDPOINT_PORT : redisCluster.attrRedisEndpointPort,
+        TOPICS_TABLE_NAME : topics.tableName,
+        ENDPOINTS_TABLE_NAME : endpoints.tableName
       }
     });
 
@@ -142,6 +160,7 @@ export class CdkSnsMessagesStack extends cdk.Stack {
     });
 
     // Setup AutoScaling policy
+    
     const scaling = service.autoScaleTaskCount({ maxCapacity: 6, minCapacity: 2 });
     scaling.scaleOnCpuUtilization('CpuScaling', {
       targetUtilizationPercent: 50,
@@ -149,6 +168,7 @@ export class CdkSnsMessagesStack extends cdk.Stack {
       scaleOutCooldown: cdk.Duration.seconds(60)
     });
     
+    // Application Load Balancer for Amazon ECS services
     
     const lb = new elbv2.ApplicationLoadBalancer(this, 'alb', {
       vpc,
@@ -158,7 +178,7 @@ export class CdkSnsMessagesStack extends cdk.Stack {
     const listener = lb.addListener('Listener', {
       port: 80,
     });
-
+    
     listener.addTargets('Target', {
       port: 80,
       targets: [service],
@@ -166,7 +186,6 @@ export class CdkSnsMessagesStack extends cdk.Stack {
     });
     
     listener.connections.allowDefaultPortFromAnyIpv4('Open to the world');
-    
     
     const deadLetterQueue = new sqs.Queue(this, 'deadLetterQueue', {
       deliveryDelay: cdk.Duration.millis(0),
@@ -183,32 +202,21 @@ export class CdkSnsMessagesStack extends cdk.Stack {
       }
     });
     
-    /*
-    const sendMessagesFunction = new lambda.Function(this, 'SendMessages', {
-      runtime: lambda.Runtime.PYTHON_3_6,
-      code: lambda.Code.fromAsset('lambda'),
-      handler: 'app.handler',
-      memorySize: 1024,
-      reservedConcurrentExecutions: 50,
-      timeout: cdk.Duration.seconds(10),
-      environment: {
-        'REDIS_ENDPOINT_ADDRESS' : redisCluster.attrRedisEndpointAddress,
-        'REDIS_ENDPOINT_PORT' : redisCluster.attrRedisEndpointPort
-      }
-    });
-    */
+    const current_path = process.cwd();
     
     const sendMessagesFunction = new lambda_python.PythonFunction(this, 'SendMessages', {
-      entry: current_path+'/lambda/', // required
-      index: 'app.py', // optional, defaults to 'index.py'
-      handler: 'handler', // optional, defaults to 'handler'
+      entry: current_path+'/lambda/', 
+      index: 'app.py', 
+      handler: 'handler',
       runtime: lambda.Runtime.PYTHON_3_6,
       memorySize: 1024,
       reservedConcurrentExecutions: 50,
       timeout: cdk.Duration.seconds(10),
       environment: {
-        'REDIS_ENDPOINT_ADDRESS' : redisCluster.attrRedisEndpointAddress,
-        'REDIS_ENDPOINT_PORT' : redisCluster.attrRedisEndpointPort
+        REDIS_ENDPOINT_ADDRESS : redisCluster.attrRedisEndpointAddress,
+        REDIS_ENDPOINT_PORT : redisCluster.attrRedisEndpointPort,
+        TOPICS_TABLE_NAME : topics.tableName,
+        ENDPOINTS_TABLE_NAME : endpoints.tableName
       }
     });
     
@@ -221,7 +229,11 @@ export class CdkSnsMessagesStack extends cdk.Stack {
       resources: ['*'],
       actions: ['sns:*']
     }));
-    
+    sendMessagesFunction.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      resources: [topics.tableArn, endpoints.tableArn],
+      actions: ['dynamodb:*']
+    }));
     
   }
 }
