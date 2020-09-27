@@ -64,7 +64,7 @@ mkdir backend-app
 cd backend-app
 ```
 
-Create the following files inside the filder with the samples codes linked.
+Create the following files inside the folder with the samples codes linked.
 - [backend-app/app.py](backend-app/app.py)
 - [backend-app/Dockerfile](backend-app/Dockerfile)
 - [backend-app/requirements.txt](backend-app/requirements.txt)
@@ -103,7 +103,7 @@ mkdir lambda
 cd lambda
 ```
 
-Create the following files inside the filder with the samples codes linked.
+Create the following files inside the folder with the samples codes linked.
 - [lambda/app.py](lambda/app.py)
 - [lambda/requirements.txt](lambda/requirements.txt)
 
