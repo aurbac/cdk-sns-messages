@@ -54,29 +54,67 @@ Deploy the stack.
 cdk deploy
 ```
 
-
 ## Step 2: Create the image container and push to Amazon ECR
+
+Create folder for container project.
+
+``` bash
+cd ~/environment/cdk-sns-messages/
+mkdir backend-app
+cd backend-app
+```
+
+Create the following files inside the filder with the samples codes linked.
+- [backend-app/app.py](backend-app/app.py)
+- [backend-app/Dockerfile](backend-app/Dockerfile)
+- [backend-app/requirements.txt](backend-app/requirements.txt)
 
 Build the docker image.
 
 ``` bash
-cd backend-app
 docker build -t backend-app .
 ```
 
-Push the image to Amazon Elastic Container Registry created previously.
+Test you Flask application inside Cloud9 environment, **use the following command only after step 4 is completed using the table names from the output**.
+
+``` bash
+docker run -p 8080:5000 \
+-e AWS_ACCESS_KEY_ID=xyz \
+-e AWS_SECRET_ACCESS_KEY=xyz \
+-e AWS_DEFAULT_REGION=us-east-1 \
+-e TOPICS_TABLE_NAME=topics_table_name \
+-e SUBSCRIPTIONS_TABLE_NAME=subscriptions_table_name \
+backend-app
+```
+
+Push the docker image to Amazon Elastic Container Registry created previously.
 
 ``` bash
 ecs-cli push backend-app
 ```
 
-## Step 3: Add to the CDK project the remaining services
+## Step 3: Create the lambda function in your local project
+
+Create folder for container project.
+
+``` bash
+cd ~/environment/cdk-sns-messages/
+mkdir lambda
+cd lambda
+```
+
+Create the following files inside the filder with the samples codes linked.
+- [lambda/app.py](lambda/app.py)
+- [lambda/requirements.txt](lambda/requirements.txt)
+
+## Step 4: Add to the CDK project the remaining services
 
 In **lib/cdk-sns-messages-stack.ts**, add the code of **Step 3** from [lib/cdk-sns-messages-stack.ts](lib/cdk-sns-messages-stack.ts).
 
 Save it and make sure it builds and creates a stack.
 
 ``` bash
+cd ~/environment/cdk-sns-messages/
 npm run build
 cdk synth
 ```

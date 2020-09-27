@@ -28,7 +28,7 @@ export class CdkSnsMessagesStack extends cdk.Stack {
     
     
     //////////////////////////////////////////////////////////////////////
-    // STEP 3
+    // STEP 4
     //////////////////////////////////////////////////////////////////////
     
     // DynamoDB Tables
@@ -42,14 +42,25 @@ export class CdkSnsMessagesStack extends cdk.Stack {
     });
     new cdk.CfnOutput(this, 'TopicsTableName', { value: topics.tableName });
     
-    const endpoints = new dynamodb.Table(this, 'endpoints', {
+    const subscriptions = new dynamodb.Table(this, 'subscriptions', {
       partitionKey: {
-        name: 'endpoint_id',
+        name: 'subscription_arn',
         type: dynamodb.AttributeType.STRING
-      },
+      }, 
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
     });
-    new cdk.CfnOutput(this, 'EndpointsTableName', { value: endpoints.tableName });
+    subscriptions.addGlobalSecondaryIndex({
+      indexName: 'subscription', 
+      projectionType: dynamodb.ProjectionType.ALL,
+      partitionKey: {
+        name: 'endpoint',
+        type: dynamodb.AttributeType.STRING
+      }, sortKey: {
+        name: 'topic_name',
+        type: dynamodb.AttributeType.STRING
+      }
+    });
+    new cdk.CfnOutput(this, 'SubscriptionsTableName', { value: subscriptions.tableName });
     
     // Network configuration
     
@@ -64,7 +75,7 @@ export class CdkSnsMessagesStack extends cdk.Stack {
     });
     
     // Cluster with Amazon ElastiCache
-    
+    /*
     const redisSubnetGroup = new cache.CfnSubnetGroup(
       this,
       "RedisClusterPrivateSubnetGroup",
@@ -94,6 +105,7 @@ export class CdkSnsMessagesStack extends cdk.Stack {
         securityGroup.securityGroupId
       ]
     });
+    */
     
     // Amazon ECS cluster
     
@@ -130,17 +142,17 @@ export class CdkSnsMessagesStack extends cdk.Stack {
     }));
     fargateTaskDefinition.addToTaskRolePolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
-      resources: [topics.tableArn, endpoints.tableArn],
+      resources: [topics.tableArn, subscriptions.tableArn],
       actions: ['dynamodb:*']
     }));
 
     const container = fargateTaskDefinition.addContainer("container-backend-app", {
       image: ecs.ContainerImage.fromRegistry(repository.repositoryUri),
       environment: { 
-        REDIS_ENDPOINT_ADDRESS : redisCluster.attrRedisEndpointAddress,
-        REDIS_ENDPOINT_PORT : redisCluster.attrRedisEndpointPort,
+        //REDIS_ENDPOINT_ADDRESS : redisCluster.attrRedisEndpointAddress,
+        //REDIS_ENDPOINT_PORT : redisCluster.attrRedisEndpointPort,
         TOPICS_TABLE_NAME : topics.tableName,
-        ENDPOINTS_TABLE_NAME : endpoints.tableName
+        SUBSCRIPTIONS_TABLE_NAME : subscriptions.tableName
       }
     });
 
@@ -187,6 +199,10 @@ export class CdkSnsMessagesStack extends cdk.Stack {
     
     listener.connections.allowDefaultPortFromAnyIpv4('Open to the world');
     
+    new cdk.CfnOutput(this, 'LoadBalancerDnsName', { value: lb.loadBalancerDnsName });
+    
+    // Amazon SQS - Queue service
+    
     const deadLetterQueue = new sqs.Queue(this, 'deadLetterQueue', {
       deliveryDelay: cdk.Duration.millis(0),
       retentionPeriod: cdk.Duration.days(14),
@@ -202,6 +218,8 @@ export class CdkSnsMessagesStack extends cdk.Stack {
       }
     });
     
+    // Lambda function
+    
     const current_path = process.cwd();
     
     const sendMessagesFunction = new lambda_python.PythonFunction(this, 'SendMessages', {
@@ -213,10 +231,10 @@ export class CdkSnsMessagesStack extends cdk.Stack {
       reservedConcurrentExecutions: 50,
       timeout: cdk.Duration.seconds(10),
       environment: {
-        REDIS_ENDPOINT_ADDRESS : redisCluster.attrRedisEndpointAddress,
-        REDIS_ENDPOINT_PORT : redisCluster.attrRedisEndpointPort,
+        //REDIS_ENDPOINT_ADDRESS : redisCluster.attrRedisEndpointAddress,
+        //REDIS_ENDPOINT_PORT : redisCluster.attrRedisEndpointPort,
         TOPICS_TABLE_NAME : topics.tableName,
-        ENDPOINTS_TABLE_NAME : endpoints.tableName
+        SUBSCRIPTIONS_TABLE_NAME : subscriptions.tableName
       }
     });
     
@@ -231,7 +249,7 @@ export class CdkSnsMessagesStack extends cdk.Stack {
     }));
     sendMessagesFunction.addToRolePolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
-      resources: [topics.tableArn, endpoints.tableArn],
+      resources: [topics.tableArn, subscriptions.tableArn],
       actions: ['dynamodb:*']
     }));
     

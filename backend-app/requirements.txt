@@ -1,1 +1,4 @@
 Flask
+boto3
+botocore
+jsonify
